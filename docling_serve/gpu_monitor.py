@@ -26,7 +26,7 @@ def _log_gpu_memory(label: str) -> None:
         allocated = torch.cuda.memory_allocated()
         reserved = torch.cuda.memory_reserved()
         max_allocated = torch.cuda.max_memory_allocated()
-        total = torch.cuda.get_device_properties(0).total_mem
+        total = torch.cuda.get_device_properties(0).total_memory
         free, total_nv = torch.cuda.mem_get_info()
         _log.warning(
             f"[GPU] {label} | "
