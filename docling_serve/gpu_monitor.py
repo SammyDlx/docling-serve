@@ -54,6 +54,7 @@ def _wrap_method(cls, method_name, label):
             return result
         except Exception as e:
             _log_gpu_memory(f"{label} ERROR ({type(e).__name__})")
+            _log.warning(f"[GPU] Exception detail: {e}")
             if "OutOfMemory" in type(e).__name__ or "CUDA" in str(e):
                 try:
                     import torch.cuda
