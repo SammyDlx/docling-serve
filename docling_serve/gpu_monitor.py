@@ -26,11 +26,16 @@ def _log_gpu_memory(label: str) -> None:
         allocated = torch.cuda.memory_allocated()
         reserved = torch.cuda.memory_reserved()
         max_allocated = torch.cuda.max_memory_allocated()
+        total = torch.cuda.get_device_properties(0).total_mem
+        free, total_nv = torch.cuda.mem_get_info()
         _log.warning(
             f"[GPU] {label} | "
             f"allocated={_fmt_mb(allocated)} "
             f"reserved={_fmt_mb(reserved)} "
-            f"max_allocated={_fmt_mb(max_allocated)}"
+            f"max_allocated={_fmt_mb(max_allocated)} "
+            f"total_vram={_fmt_mb(total)} "
+            f"free_vram={_fmt_mb(free)} "
+            f"used_outside_pytorch={_fmt_mb(total_nv - free - reserved)}"
         )
     except Exception as e:
         _log.error(f"[GPU] Failed to read memory stats: {e}")
@@ -49,6 +54,12 @@ def _wrap_method(cls, method_name, label):
             return result
         except Exception as e:
             _log_gpu_memory(f"{label} ERROR ({type(e).__name__})")
+            if "OutOfMemory" in type(e).__name__ or "CUDA" in str(e):
+                try:
+                    import torch.cuda
+                    _log.warning(f"[GPU] Memory summary at OOM:\n{torch.cuda.memory_summary()}")
+                except Exception:
+                    pass
             raise
 
     setattr(cls, method_name, wrapper)
