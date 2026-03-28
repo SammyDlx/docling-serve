@@ -1,10 +1,12 @@
 """GPU memory monitoring for debugging OOM in docling-serve.
 
 Monkey-patches key docling model classes to log GPU memory usage
-at model loading and inference time.
+at model loading and inference time. Also patches pipeline cache
+to log cache hits/misses and option hash changes.
 """
 
 import functools
+import hashlib
 import logging
 import os
 import traceback
@@ -69,6 +71,90 @@ def _wrap_method(cls, method_name, label):
 
     setattr(cls, method_name, wrapper)
     _log.info(f"Patched {cls.__name__}.{method_name} with GPU monitor")
+
+
+def _options_hash(pipeline_options) -> str:
+    """Compute the same hash that DocumentConverter._get_pipeline uses."""
+    try:
+        options_str = str(pipeline_options.model_dump())
+        return hashlib.md5(options_str.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
+    except Exception:
+        return "?"
+
+
+def _patch_get_pipeline():
+    """Patch DocumentConverter._get_pipeline to log cache hits/misses and hash values."""
+    try:
+        from docling.document_converter import DocumentConverter
+
+        original = DocumentConverter._get_pipeline
+
+        @functools.wraps(original)
+        def patched_get_pipeline(self, doc_format):
+            fopt = self.format_to_options.get(doc_format)
+            if fopt and fopt.pipeline_options:
+                h = _options_hash(fopt.pipeline_options)
+                opts = fopt.pipeline_options
+                key_fields = {}
+                for field in ["do_chart_extraction", "do_picture_classification",
+                              "do_table_structure", "do_ocr"]:
+                    if hasattr(opts, field):
+                        key_fields[field] = getattr(opts, field)
+                cache_key = (fopt.pipeline_cls.__name__ if fopt.pipeline_cls else "?", h)
+                hit = cache_key in self.initialized_pipelines
+                _log.warning(
+                    f"[GPU] _get_pipeline(format={doc_format}) | "
+                    f"hash={h} cache_hit={hit} "
+                    f"cache_keys={[(c[0], c[1]) for c in self.initialized_pipelines.keys()]} "
+                    f"opts={key_fields}"
+                )
+            _log_gpu_memory(f"_get_pipeline({doc_format})")
+            result = original(self, doc_format)
+            if fopt and fopt.pipeline_options:
+                h_after = _options_hash(fopt.pipeline_options)
+                if h_after != h:
+                    _log.warning(
+                        f"[GPU] _get_pipeline HASH CHANGED after pipeline creation! "
+                        f"before={h} after={h_after} — this causes cache misses"
+                    )
+                    opts_after = fopt.pipeline_options
+                    after_fields = {}
+                    for field in ["do_chart_extraction", "do_picture_classification",
+                                  "do_table_structure", "do_ocr"]:
+                        if hasattr(opts_after, field):
+                            after_fields[field] = getattr(opts_after, field)
+                    _log.warning(f"[GPU] Options before: {key_fields} -> after: {after_fields}")
+            return result
+
+        DocumentConverter._get_pipeline = patched_get_pipeline
+        _log.info("Patched DocumentConverter._get_pipeline with cache monitor")
+    except Exception as e:
+        _log.warning(f"Could not patch DocumentConverter._get_pipeline: {e}")
+
+
+def _patch_initialize_pipeline():
+    """Patch DocumentConverter.initialize_pipeline to log hash before/after."""
+    try:
+        from docling.document_converter import DocumentConverter
+
+        original = DocumentConverter.initialize_pipeline
+
+        @functools.wraps(original)
+        def patched_init_pipeline(self, format):
+            fopt = self.format_to_options.get(format)
+            h_before = _options_hash(fopt.pipeline_options) if fopt and fopt.pipeline_options else "?"
+            _log.warning(f"[GPU] initialize_pipeline(format={format}) hash_before={h_before}")
+            _log_gpu_memory(f"initialize_pipeline({format}) BEFORE")
+            result = original(self, format)
+            h_after = _options_hash(fopt.pipeline_options) if fopt and fopt.pipeline_options else "?"
+            _log.warning(f"[GPU] initialize_pipeline done hash_after={h_after} changed={h_before != h_after}")
+            _log_gpu_memory(f"initialize_pipeline({format}) AFTER")
+            return result
+
+        DocumentConverter.initialize_pipeline = patched_init_pipeline
+        _log.info("Patched DocumentConverter.initialize_pipeline with hash monitor")
+    except Exception as e:
+        _log.warning(f"Could not patch DocumentConverter.initialize_pipeline: {e}")
 
 
 def install_gpu_monitor():
@@ -147,5 +233,9 @@ def install_gpu_monitor():
         patched += 1
     except ImportError as e:
         _log.warning(f"Could not patch DoclingConverterManager: {e}")
+
+    # 5. Pipeline cache monitoring — log hash changes and cache hits/misses
+    _patch_get_pipeline()
+    _patch_initialize_pipeline()
 
     _log.warning(f"GPU monitor installed — {patched} components patched")
