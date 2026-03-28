@@ -7,6 +7,7 @@ at model loading and inference time.
 import functools
 import logging
 import os
+import traceback
 
 _log = logging.getLogger("docling_serve.gpu_monitor")
 
@@ -48,6 +49,9 @@ def _wrap_method(cls, method_name, label):
     @functools.wraps(original)
     def wrapper(*args, **kwargs):
         _log_gpu_memory(f"{label} BEFORE")
+        if "__init__" in method_name:
+            stack = "".join(traceback.format_stack(limit=10))
+            _log.warning(f"[GPU] {label} call stack:\n{stack}")
         try:
             result = original(*args, **kwargs)
             _log_gpu_memory(f"{label} AFTER")
