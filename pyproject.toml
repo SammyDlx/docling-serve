@@ -71,6 +71,10 @@ rapidocr = [
 flash-attn = [
   "flash-attn~=2.8.2; sys_platform == 'linux'"
 ]
+azure = [
+    "azure-storage-blob>=12.20.0",
+    "azure-identity>=1.16.0",
+]
 
 [dependency-groups]
 dev = [
