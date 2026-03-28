@@ -135,6 +135,11 @@ _models_ready = asyncio.Event()
 # Context manager to initialize and clean up the lifespan of the FastAPI app
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Install GPU memory monitor before any models are loaded
+    from docling_serve.gpu_monitor import install_gpu_monitor
+
+    install_gpu_monitor()
+
     scratch_dir = get_scratch()
 
     orchestrator = get_async_orchestrator()
