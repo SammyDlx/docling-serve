@@ -457,6 +457,32 @@ def get_async_orchestrator() -> BaseOrchestrator:
         )
         cm = DoclingConverterManager(config=cm_config)
 
+        from docling_serve.blob_persistence import (
+            is_blob_persistence_configured,
+            upload_result_to_blob,
+        )
+
+        if is_blob_persistence_configured():
+
+            class BlobPersistingLocalOrchestrator(LocalOrchestrator):
+                """Uploads completed results to Azure Blob Storage on first retrieval."""
+
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    self._blob_uploaded: set[str] = set()
+
+                async def task_result(self, task_id: str):
+                    result = await super().task_result(task_id)
+                    if result is not None and task_id not in self._blob_uploaded:
+                        self._blob_uploaded.add(task_id)
+                        result_data = result.model_dump(mode="json")
+                        upload_result_to_blob(task_id, result_data)
+                    return result
+
+            return BlobPersistingLocalOrchestrator(
+                config=local_config, converter_manager=cm
+            )
+
         return LocalOrchestrator(config=local_config, converter_manager=cm)
 
     elif docling_serve_settings.eng_kind == AsyncEngine.RQ:

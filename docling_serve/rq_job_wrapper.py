@@ -31,36 +31,7 @@ from docling_serve.rq_instrumentation import extract_trace_context
 
 logger = logging.getLogger(__name__)
 
-_BLOB_STORAGE_ACCOUNT = os.environ.get("STORAGE_ACCOUNT_NAME", "")
-_BLOB_RESULT_CONTAINER = os.environ.get("RESULT_CONTAINER", "")
-
-
-def _upload_result_to_blob(task_id: str, result_data: dict) -> None:
-    """Upload conversion result JSON to Azure Blob Storage."""
-    if not _BLOB_STORAGE_ACCOUNT or not _BLOB_RESULT_CONTAINER:
-        return
-
-    try:
-        from azure.identity import DefaultAzureCredential
-        from azure.storage.blob import BlobServiceClient, ContentSettings
-
-        credential = DefaultAzureCredential()
-        blob_service = BlobServiceClient(
-            account_url=f"https://{_BLOB_STORAGE_ACCOUNT}.blob.core.windows.net",
-            credential=credential,
-        )
-        container_client = blob_service.get_container_client(_BLOB_RESULT_CONTAINER)
-        blob_name = f"{task_id}.json"
-        result_json = json.dumps(result_data, default=str)
-        container_client.upload_blob(
-            name=blob_name,
-            data=result_json,
-            overwrite=True,
-            content_settings=ContentSettings(content_type="application/json"),
-        )
-        logger.info(f"Task {task_id} result uploaded to blob {blob_name}")
-    except Exception as e:
-        logger.error(f"Task {task_id} blob upload failed: {e}")
+from docling_serve.blob_persistence import upload_result_to_blob
 
 
 def instrumented_docling_task(  # noqa: C901
@@ -234,7 +205,7 @@ def instrumented_docling_task(  # noqa: C901
                 store_span.set_attribute("result_key", result_key)
 
                 # Upload result to Azure Blob Storage if configured
-                _upload_result_to_blob(task_id, safe_data)
+                upload_result_to_blob(task_id, safe_data)
 
             # Notify task success
             with tracer.start_as_current_span("notify.task_success"):
