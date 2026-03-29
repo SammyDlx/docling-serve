@@ -179,11 +179,12 @@ def install_gpu_monitor():
             "__init__",
             "ChartExtraction.__init__ (model load)",
         )
-        _wrap_method(
-            ChartExtractionModelGraniteVision,
-            "__call__",
-            "ChartExtraction.__call__ (inference)",
-        )
+        # __call__ is patched with detailed logging in section 1b below
+        # _wrap_method(
+        #     ChartExtractionModelGraniteVision,
+        #     "__call__",
+        #     "ChartExtraction.__call__ (inference)",
+        # )
         patched += 1
     except ImportError as e:
         _log.warning(f"Could not patch ChartExtractionModelGraniteVision: {e}")
