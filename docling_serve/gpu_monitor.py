@@ -188,6 +188,117 @@ def install_gpu_monitor():
     except ImportError as e:
         _log.warning(f"Could not patch ChartExtractionModelGraniteVision: {e}")
 
+    # 1b. Chart extraction — granular __call__ internals
+    try:
+        from docling.models.stages.chart_extraction.granite_vision import (
+            ChartExtractionModelGraniteVision as _ChartModel,
+        )
+
+        _original_chart_call = _ChartModel.__call__
+
+        def _detailed_chart_call(self, doc, element_batch):
+            if not self.enabled:
+                yield from _original_chart_call(self, doc, element_batch)
+                return
+
+            from PIL import Image as PILImage
+
+            images = []
+            elements = []
+            for el in element_batch:
+                elements.append(el.item)
+                images.append(el.image)
+
+            _log.warning(f"[GPU] ChartExtraction DETAIL: {len(images)} images")
+            for i, img in enumerate(images):
+                _log.warning(f"[GPU] ChartExtraction DETAIL: image[{i}] size={img.size} mode={img.mode}")
+
+            _log_gpu_memory("ChartExtraction DETAIL: before apply_chat_template")
+
+            conversations = []
+            for image in images:
+                conversations.append([{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": "Convert the information in this chart into a data table in CSV format."},
+                    ],
+                }])
+
+            inputs = self._processor.apply_chat_template(
+                conversations,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+                padding=True,
+                padding_side="left",
+            )
+            _log_gpu_memory("ChartExtraction DETAIL: after apply_chat_template (CPU tensors)")
+
+            for k, v in inputs.items():
+                if hasattr(v, 'shape'):
+                    _log.warning(f"[GPU] ChartExtraction DETAIL: input[{k}] shape={v.shape} dtype={v.dtype}")
+
+            inputs = inputs.to(self.device)
+            _log_gpu_memory("ChartExtraction DETAIL: after .to(device)")
+
+            eos_ids = [
+                self._processor.tokenizer.eos_token_id,
+                self._processor.tokenizer.convert_tokens_to_ids("<|end_of_text|>"),
+            ]
+
+            _log_gpu_memory("ChartExtraction DETAIL: before generate()")
+            output_ids = self._model.generate(
+                **inputs,
+                max_new_tokens=self._model_max_length,
+                eos_token_id=eos_ids,
+            )
+            _log_gpu_memory("ChartExtraction DETAIL: after generate()")
+
+            output_texts = self._processor.batch_decode(output_ids, skip_special_tokens=True)
+            _log_gpu_memory("ChartExtraction DETAIL: after batch_decode()")
+
+            chart_data = self._post_process(outputs=output_texts)
+
+            from docling.datamodel.document import PictureItem
+            from docling.datamodel.base_models import PictureMeta
+            from docling_core.types.doc.document import TabularChartMetaField
+
+            for item, tabular_chart in zip(elements, chart_data):
+                if (tabular_chart is not None) and isinstance(item, PictureItem):
+                    if (item.meta is not None) and isinstance(item.meta, PictureMeta):
+                        item.meta.tabular_chart = tabular_chart
+                    else:
+                        meta = PictureMeta(tabular_chart=tabular_chart)
+                        item.meta = meta
+                yield item
+
+        _ChartModel.__call__ = _detailed_chart_call
+        _log.info("Patched ChartExtractionModelGraniteVision.__call__ with detailed GPU monitor")
+    except Exception as e:
+        _log.warning(f"Could not patch detailed chart __call__: {e}")
+
+    # 1c. Chart extraction — prepare_element logging
+    try:
+        from docling.models.base_model import BaseItemAndImageEnrichmentModel
+
+        _original_prepare = BaseItemAndImageEnrichmentModel.prepare_element
+
+        def _logged_prepare(self, conv_res, element):
+            result = _original_prepare(self, conv_res, element)
+            if result is not None:
+                cls_name = type(self).__name__
+                img = result.image
+                if img is not None:
+                    _log.warning(f"[GPU] {cls_name}.prepare_element: image size={img.size} mode={img.mode} scale={getattr(self, 'images_scale', '?')}")
+            return result
+
+        BaseItemAndImageEnrichmentModel.prepare_element = _logged_prepare
+        _log.info("Patched BaseItemAndImageEnrichmentModel.prepare_element with image size logger")
+    except Exception as e:
+        _log.warning(f"Could not patch prepare_element: {e}")
+
     # 2. Picture classifier
     try:
         from docling.models.stages.picture_classifier.document_picture_classifier import (
