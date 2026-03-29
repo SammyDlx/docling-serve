@@ -9,7 +9,6 @@ _log = logging.getLogger(__name__)
 
 _BLOB_STORAGE_ACCOUNT = os.environ.get("STORAGE_ACCOUNT_NAME", "")
 _BLOB_RESULT_CONTAINER = os.environ.get("RESULT_CONTAINER", "")
-_BLOB_RESULT_PREFIX = os.environ.get("RESULT_PREFIX", "")
 
 
 def is_blob_persistence_configured() -> bool:
@@ -31,7 +30,7 @@ def upload_result_to_blob(task_id: str, result_data: dict) -> None:
             credential=credential,
         )
         container_client = blob_service.get_container_client(_BLOB_RESULT_CONTAINER)
-        blob_name = f"{_BLOB_RESULT_PREFIX}/{task_id}.json" if _BLOB_RESULT_PREFIX else f"{task_id}.json"
+        blob_name = f"{task_id}.json"
         result_json = json.dumps(result_data, default=str)
         container_client.upload_blob(
             name=blob_name,

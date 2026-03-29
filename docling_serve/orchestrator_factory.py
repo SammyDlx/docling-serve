@@ -464,24 +464,20 @@ def get_async_orchestrator() -> BaseOrchestrator:
 
         if is_blob_persistence_configured():
 
-            class _AutoPersistDict(dict):
-                """Dict subclass that uploads result to blob on every __setitem__."""
-
-                def __setitem__(self, task_id, task_result):
-                    super().__setitem__(task_id, task_result)
-                    try:
-                        result_data = task_result.model_dump(mode="json")
-                        upload_result_to_blob(task_id, result_data)
-                    except Exception as e:
-                        _log.error(f"Auto-persist to blob failed for {task_id}: {e}")
-
             class BlobPersistingLocalOrchestrator(LocalOrchestrator):
-                """Persists results to Azure Blob Storage immediately after processing."""
+                """Uploads completed results to Azure Blob Storage on first retrieval."""
 
                 def __init__(self, *args, **kwargs):
                     super().__init__(*args, **kwargs)
-                    # Replace _task_results with auto-persisting dict
-                    self._task_results = _AutoPersistDict(self._task_results)
+                    self._blob_uploaded: set[str] = set()
+
+                async def task_result(self, task_id: str):
+                    result = await super().task_result(task_id)
+                    if result is not None and task_id not in self._blob_uploaded:
+                        self._blob_uploaded.add(task_id)
+                        result_data = result.model_dump(mode="json")
+                        upload_result_to_blob(task_id, result_data)
+                    return result
 
             return BlobPersistingLocalOrchestrator(
                 config=local_config, converter_manager=cm
