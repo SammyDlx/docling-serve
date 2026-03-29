@@ -262,9 +262,7 @@ def install_gpu_monitor():
 
             chart_data = self._post_process(outputs=output_texts)
 
-            from docling.datamodel.document import PictureItem
-            from docling.datamodel.base_models import PictureMeta
-            from docling_core.types.doc.document import TabularChartMetaField
+            from docling_core.types.doc import PictureItem, PictureMeta, TabularChartMetaField
 
             for item, tabular_chart in zip(elements, chart_data):
                 if (tabular_chart is not None) and isinstance(item, PictureItem):
